@@ -1,0 +1,163 @@
+---
+title: "Auditor big file demonstration for alpha"
+output:
+  html_document:
+    df_print: paged
+---
+
+#Regression use case - toulouse appt data
+
+To illustrate applications of auditor to regression problems we will use an real-estate dataset available from DALEX package. Our goal is to predict the price per square meter based on selected features. It should be noted that four of these variables are continuous while the fifth one is a categorical one. Prices are given in Euro.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+# Library
+library(tidyverse)
+library(DALEX) # v2.1
+library(DALEXtra) # for XGboost explainer
+library(auditor)
+library(yardstick)
+library(ranger)
+library(xgboost)
+library(h2o)
+h2o.init()
+load(here::here("toulouse_appartements.Rda"))
+set.seed(59)
+```
+
+
+```{r}
+head(appartements)
+```
+
+# Entrainement des modèles
+On entraîne 3 types de modèles 
+
+## Random forest
+```{r}
+rf_model <- ranger(prix_m2 ~ ., data = appartements, num.trees = 300,
+                   importance = "impurity", seed = 2323)
+rf_predict <- predict(rf_model, appartements_test)
+sqrt(mean((rf_predict$predictions- appartements_test$prix_m2)^2)) 
+```
+## Linear model
+```{r}
+# reduce nb of variable for memory footprint
+glm_model <- glm(prix_m2 ~ ., data = appartements)
+glm_predict <- predict(glm_model, appartements_test)
+sqrt(mean((glm_predict - appartements_test$prix_m2)^2)) 
+```
+
+## XGboost model
+```{r}
+model_matrix_train <- model.matrix(prix_m2 ~ . - 1, appartements)
+data_train <- xgb.DMatrix(model_matrix_train, label = appartements$prix_m2)
+model_matrix_test <- model.matrix(prix_m2 ~ . - 1, appartements_test)
+data_test <- xgb.DMatrix(model_matrix_test, label = appartements_test$prix_m2)
+param <- list( booster="gbtree", nthread = 4, max_depth = 5, eta = 0.7,
+              objective = "reg:gamma", lambda=0.01, alpha=0.02)
+
+xgb_model <- xgb.train(param, data_train, nrounds = 16, verbose=0)
+xgb_predict <- predict(xgb_model, data_test)
+sqrt(mean((xgb_predict - appartements_test$prix_m2)^2)) 
+```
+
+## RuleFit model
+```{r}
+response <- "prix_m2"
+predictor<- setdiff(names(appartements), response)
+appartements_h2o <- as.h2o(appartements)
+appartements_test_h2o <- as.h2o(appartements_test)
+
+rulefit_model <- h2o.rulefit(x=predictor,
+                     y="prix_m2",
+                     training_frame = appartements_h2o,
+                     model_type = "rules_and_linear",
+                     max_num_rules = 100,
+                     min_rule_length = 2,
+                     max_rule_length = 7
+                     )
+rulefit_predict <- h2o.predict(rulefit_model, newdata = appartements_test_h2o)
+sqrt(mean((rulefit_predict - appartements_test_h2o$prix_m2)^2)) 
+
+```
+
+## GAM model
+```{r}
+gam_model <- h2o.gam(x=predictor,
+                     y=response,
+                     training_frame = appartements_h2o,
+                     gam_columns = c("étage", "surface")
+                     )
+gam_predict <- h2o.predict(gam_model, newdata = appartements_test_h2o)
+sqrt(mean((gam_predict - appartements_test_h2o$prix_m2)^2)) 
+
+```
+
+## Préparation de l'analyse des modèles
+
+On commence par préparer un modelAudit de chaque modèle
+
+```{r}
+lm_expln <- explain(glm_model, label = "glm", data = appartements_test, y = appartements_test$prix_m2)
+lm_res <- model_residual(lm_expln)
+
+p.fun <- function(model,data) {
+  predict(model,data, num.trees=300)$predictions
+}
+rf_expln <- explain(rf_model, label = "rf",  data = appartements_test, y = appartements_test$prix_m2, predict.function = p.fun)
+rf_res <- model_residual(rf_expln)
+
+xgb_expln <- explain_xgboost(xgb_model, label="xgboost", data = model_martix_test, y = appartements_test$prix_m2 )
+xgb_res <- model_residual(xgb_expln)
+
+rulefit_expln <- explain_h2o(rulefit_model, label = "rulefit",  data = appartements_test_h2o, y = appartements_test$prix_m2 )
+rulefit_res <- model_residual(rulefit_expln)
+
+gam_expln <- explain_h2o(gam_model, label = "gam",  data = appartements_test_h2o, y = appartements_test$prix_m2 )
+gam_res <- model_residual(gam_expln)
+```
+
+#  des résiduts des modèles
+
+In this section we give short overview of a visual validation of model errors and show the propositions for the validation scores. Auditor helps to find answers for questions that may be crucial for further analyses.
+Does the model fit data? Is it not missing the information?
+Plotting residuals
+
+Function plot() used on modelAudit object returns a Residuals vs fitted values plot.
+
+```{r}
+plot(rf_res, lm_res, rulefit_res, gam_res, type="residual_boxplot")
+plot(xgb_res,  type="residual_boxplot")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="residual", nlabel = 8)
+plot(xgb_res,type="residual", nlabel = 8)
+plot(rf_res,lm_res, rulefit_res, gam_res,type="scalelocation")
+plot(xgb_res,type="scalelocation")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="residual_density")
+plot(xgb_res,type="residual_density")
+# plot(lm_res,type="halfnormal")
+# plot(rf_res,type="HalfNormal") # hnp.default(model, plot.sim = FALSE, ...) : This function has not been implemented for objects of class 'ranger'
+plot(rf_res,lm_res, rulefit_res, type="rroc")
+plot(xgb_res,type="rroc")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="rec")
+plot(xgb_res,type="rec")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="correlation", values="fit")
+plot(xgb_res,type="correlation", values="fit")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="correlation", values="res")
+plot(xgb_res,type="correlation", values="res")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="autocorrelation")
+plot(xgb_res,type="autocorrelation")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="acf")
+plot(xgb_res,type="acf")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="tsecdf")
+plot(xgb_res,type="tsecdf")
+plot(rf_res,lm_res, rulefit_res, gam_res,type="pca")
+plot(xgb_res,type="pca")
+plot(rf_res,type="Prediction")
+plot(lm_res,type="Prediction")
+plot(rulefit_res,type="Prediction")
+plot(gam_res,type="Prediction")
+plot(xgb_res,type="Prediction")
+```
+

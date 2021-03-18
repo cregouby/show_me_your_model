@@ -1,0 +1,299 @@
+---
+title: "Auditor big file demonstration for alpha"
+output:
+  html_document:
+    df_print: paged
+---
+
+#Regression use case - toulouse appt data
+
+To illustrate applications of auditor to regression problems we will use an real-estate dataset available from DALEX package. Our goal is to predict the price per square meter based on selected features. It should be noted that four of these variables are continuous while the fifth one is a categorical one. Prices are given in Euro.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+# Library
+library(tidyverse)
+library(recipes)
+library(DALEX) # v2.1
+library(DALEXtra)
+library(auditor)
+library(randomForestExplainer)
+library(factorMerger)
+library(iBreakDown)
+library(yardstick)
+library(ranger)
+library(xgboost)
+library(h2o)
+library(tabnet) # from remotes::install_githib(repo="cregouby/tabnet", ref="feature/autoplot" )
+h2o.init() # v 3.32+ to include rulefit
+load(here::here("toulouse_appartements.Rda"))
+set.seed(59)
+```
+
+
+```{r}
+head(appartements)
+```
+
+# Entrainement des modèles
+On entraîne 3 types de modèles 
+
+## Random forest
+```{r}
+rf_model <- ranger(prix_m2 ~ ., data = appartements, num.trees = 300,
+                   importance = "impurity", seed = 2323)
+rf_predict <- predict(rf_model, appartements_test)
+sqrt(mean((rf_predict$predictions- appartements_test$prix_m2)^2)) 
+```
+## Linear model
+```{r}
+# reduce nb of variable for memory footprint
+glm_model <- glm(prix_m2 ~ ., data = appartements)
+glm_predict <- predict(glm_model, appartements_test)
+sqrt(mean((glm_predict - appartements_test$prix_m2)^2)) 
+```
+## RuleFit model
+```{r}
+response <- "prix_m2"
+predictor<- setdiff(names(appartements), response)
+appartements_h2o <- as.h2o(appartements)
+appartements_test_h2o <- as.h2o(appartements_test)
+
+rulefit_model <- h2o.rulefit(x=predictor,                y="prix_m2",
+                     training_frame = appartements_h2o,  model_type = "rules_and_linear",
+                     max_num_rules = 100,                min_rule_length = 2,
+                     max_rule_length = 7
+                     )
+rulefit_predict <- h2o.predict(rulefit_model, newdata = appartements_test_h2o)
+sqrt(mean((rulefit_predict - appartements_test_h2o$prix_m2)^2)) 
+```
+
+
+## Préparation de l'analyse des modèles
+
+On commence par préparer un model explainer de chaque modèle. Pour les modèles specifiques (h2o, xgboost, ...) c'est`DALEXtra::` qui fournit les fonction `explain_`.  
+
+```{r}
+lm_expln <- explain(glm_model, label = "glm", data = appartements_test, y = appartements_test$prix_m2)
+
+p.fun <- function(model,data) {
+  predict(model,data, num.trees=300)$predictions
+}
+rf_expln <- explain(rf_model, label = "rf",  data = appartements_test, y = appartements_test$prix_m2, predict.function = p.fun)
+
+rulefit_expln <- explain_h2o(rulefit_model, label = "rulefit",  data = appartements_test_h2o, y = appartements_test$prix_m2 )
+```
+
+
+```{r}
+lm_res <- model_residual(lm_expln)
+rf_res <- model_residual(rf_expln)
+rulefit_res <- model_residual(rulefit_expln)
+```
+
+#  Visualisation des résidus des modèles
+
+In this section we give short overview of a visual validation of model errors and show the propositions for the validation scores. Auditor helps to find answers for questions that may be crucial for further analyses.
+Does the model fit data? Is it not missing the information?
+Plotting residuals
+
+Function plot() used on modelAudit object returns a Residuals vs fitted values plot.
+
+```{r}
+plot(rf_res, lm_res, rulefit_res, type="residual_boxplot")
+plot(rf_res, lm_res, rulefit_res, type="residual", nlabel = 8)
+plot(rf_res, type="scalelocation")
+plot(lm_res, type="scalelocation")
+plot(rulefit_res, type="scalelocation")
+plot(rf_res, lm_res, rulefit_res, type="residual_density")
+# plot(lm_res,type="halfnormal")
+# plot(rf_res,type="HalfNormal") # hnp.default(model, plot.sim = FALSE, ...) : This function has not been implemented for objects of class 'ranger'
+plot(rf_res, lm_res, rulefit_res, type="rroc")
+plot(rf_res, lm_res, rulefit_res, type="rec")
+plot(rf_res, lm_res, rulefit_res, type="correlation", values="fit")
+plot(rf_res, lm_res, rulefit_res, type="correlation", values="res")
+# plot(rf_res, lm_res, rulefit_res, type="autocorrelation")
+# plot(rf_res, lm_res, rulefit_res, type="acf")
+plot(rf_res, lm_res, rulefit_res, type="tsecdf")
+plot(rf_res, lm_res, rulefit_res, type="pca")
+plot(rf_res,type="prediction")
+plot(lm_res,type="prediction")
+plot(rulefit_res,type="prediction", )
+```
+# Comparaison entre modeles
+```{r}
+lm_perf <- model_performance(lm_expln)
+rf_perf <- model_performance(rf_expln)
+rulefit_perf <- model_performance(rulefit_expln)
+
+plot(lm_perf, rf_perf, rulefit_perf, type="radar")
+```
+
+# Model understanding
+## Variable importance
+```{r}
+lm_mod_parts <- model_parts(lm_expln,type = "difference")
+rf_mod_parts <- model_parts(rf_expln,type = "difference")
+rulefit_mod_parts <- model_parts(rulefit_expln,type = "difference")
+```
+
+```{r}
+plot(lm_mod_parts)
+plot(rf_mod_parts)
+plot(rulefit_mod_parts)
+
+plot(lm_mod_parts, rf_mod_parts, rulefit_mod_parts)
+```
+
+## Comprehension du modele global specifique a randomForest
+```{r}
+plot_min_depth_distribution(rf_model)
+plot_multi_way_importance(rf_model, size_measure = "no_of_nodes")
+plot_min_depth_interactions(rf_model)
+```
+
+# Explication des features : sensibilite a une variable continue
+
+## PDP plot d'une variable continue
+
+ˆ
+```{r}
+lm_mod_profile <- model_profile(lm_expln, variables = "année_construction", N=500, type="partial" )
+rf_mod_profile <- model_profile(rf_expln, variables = "année_construction", N=500, type="partial" )
+rulefit_mod_profile <- model_profile(rulefit_expln, variables = "année_construction", N=500, type="partial" )
+plot(lm_mod_profile, rf_mod_profile,  rulefit_mod_profile)
+
+```
+### Accumulated Dependance profile
+```{r}
+lm_mod_profile <- model_profile(lm_expln, variables = "année_construction", N=500, type="accumulated" )
+rf_mod_profile <- model_profile(rf_expln, variables = "année_construction", N=500, type="accumulated" )
+rulefit_mod_profile <- model_profile(rulefit_expln, variables = "année_construction", N=500, type="accumulated" )
+plot(lm_mod_profile, rf_mod_profile,  rulefit_mod_profile)
+
+```
+
+
+```{r}
+lm_mod_profile <- model_profile(lm_expln, variables = "année_construction", N=500, type="partial", groups="quartier", k=4)
+rf_mod_profile <- model_profile(rf_expln, variables = "année_construction", N=500, type="partial", groups="quartier", k=4)
+rulefit_mod_profile <- model_profile(rulefit_expln, variables = "année_construction", N=500, type="partial", groups="quartier", k=4)
+plot(lm_mod_profile, rf_mod_profile,  rulefit_mod_profile)
+```
+
+## PDP plot d'une variable categorielle
+```{r}
+lm_mod_profile <- model_profile(lm_expln, variables = "quartier", N=500)
+rf_mod_profile <- model_profile(rf_expln, variables = "quartier", N=500)
+rulefit_mod_profile <- model_profile(rulefit_expln, variables = "quartier",N=500)
+```
+
+
+```{r}
+plot(lm_mod_profile)+theme(axis.text.x=element_text(angle=10))
+plot(lm_mod_profile, rf_mod_profile,  rulefit_mod_profile)+theme(axis.text.x=element_text(angle=10))
+```
+
+
+## Profiles marginaux du modele
+### Avec les points
+```{r}
+#lm_mod_profile_cond <- model_profile(lm_expln, variables = "année_construction")
+rf_mod_profile_cond <- model_profile(rf_expln, variables = "année_construction")
+plot(rf_mod_profile_cond, geom="points", variables="année_construction")
+```
+
+
+```{r}
+rulefit_mod_profile_cond <- model_profile(rulefit_expln, variables = "année_construction")
+plot(rulefit_mod_profile_cond, geom="points", variables="année_construction")
+```
+
+
+
+```{r}
+
+plot(rf_mod_profile_cond,  geom="profiles", variables="année_construction")
+```
+
+## Merge Factor plot des modeles
+```{r}
+lm_fm <- mergeFactors(lm_expln$y_hat, factor = lm_expln$data$quartier)
+rf_fm <- mergeFactors(rf_expln$y_hat, factor = rf_expln$data$quartier)
+rulefit_fm <- mergeFactors(rulefit_expln$y_hat, factor = rulefit_expln$data$quartier)
+plot(lm_fm,  panel = "response") + labs(title="lm")
+plot(rf_fm,  panel = "response") + labs(title="lm")
+plot(rulefit_fm, panel = "response") + labs(title="rf")
+
+```
+# Prediction individuelle
+```{r}
+mon_appt <- appartements_test[2,]
+lm_pp <- predict_parts(lm_expln, mon_appt, type="break_down")
+rf_pp <- predict_parts(rf_expln, mon_appt, type="break_down")
+rulefit_pp <- predict_parts(rulefit_expln, mon_appt, type="break_down")
+```
+
+
+```{r}
+plot(lm_pp)
+plot(rf_pp)
+plot(rulefit_pp)
+```
+
+```{r}
+lm_ppsh <- predict_parts(lm_expln, mon_appt, type="shap")
+rf_ppsh <- predict_parts(rf_expln, mon_appt, type="shap")
+rulefit_ppsh <- predict_parts(rulefit_expln, mon_appt, type="shap")
+```
+
+
+```{r}
+plot(lm_ppsh)
+plot(rf_ppsh)
+plot(rulefit_ppsh)
+
+```
+## What-if plot : Ceteris Paribus
+```{r}
+lm_cp <- predict_profile(lm_expln, mon_appt)
+rf_cp <- predict_profile(rf_expln, mon_appt)
+rulefit_cp <- predict_profile(rulefit_expln, mon_appt)
+```
+
+```{r}
+plot(lm_cp)
+plot(rf_cp)
+plot(rulefit_cp)
+plot(lm_cp, variable_type="categorical")
+plot(rf_cp, variable_type="categorical" )
+plot(rulefit_cp, variable_type="categorical")
+
+```
+## Valider la structure locale du modele
+Diagnostique de prediction avec les cas voisins
+```{r}
+rf_pred_diag <- predict_diagnostics(explainer = rf_expln,
+                           new_observation = mon_appt,
+                                neighbours = 10,
+                                 variables = "année_construction")
+plot(rf_pred_diag)
+```
+
+# Tabnet model
+ou les modeles incluant de l'explainability
+
+```{r}
+rec <- recipe(prix_m2 ~ ., data = appartements) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+tabnet_model <- tabnet_fit(rec, data=appartements, epoch=400, batch_size=1000, checkpoint_epochs=80, valid_split=0.2, virtual_batch_size=250, verbose=T)
+tabnet_expl <- tabnet_explain(tabnet_model, new_data= appartements_test)
+```
+```{r}
+autoplot(tabnet_model2)
+autoplot(tabnet_expl)+theme_minimal()
+autoplot(tabnet_expl, type="steps")+theme_minimal()
+```
+

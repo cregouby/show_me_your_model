@@ -1,0 +1,103 @@
+---
+title: "Interpretability_Graphs"
+author: "Christophe Regouby"
+date: "25/06/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+# Library
+library(DiagrammeR)
+library(networkD3)
+library(tidyverse)
+```
+
+## Show me your model Decision Tree
+
+```{r diagrammeR decision tree }
+grViz("
+digraph high_level_showme {
+  graph [overlap = true,  fontsize = 19, layout = dot, rankdir=LR, compound = true, nodesep = .5, ranksep = .25,
+         color=crimpson]
+  node [shape = none, fontname = impact, style=filled, fillcolor = dodgerblue3, fontcolor=white, alpha=0.5 ]
+  'Montre-moi ton modèle';
+
+  subgraph clusterds {
+    node [shape = none, fontname = impact, style=filled, fillcolor = deepskyblue1, fontcolor=black, alpha=0.5  ]
+    'Je veux comprendre le\nmodèle globalement' 'Le modèle est-il bon?' 'Comment fonctionne-t-il?'} ;
+    'Montre-moi ton modèle' -> 'Je veux comprendre le\nmodèle globalement' [lhead = clusterds];
+    'Je veux comprendre le\nmodèle globalement' -> 'Le modèle est-il bon?' ;
+    'Je veux comprendre le\nmodèle globalement' -> 'Comment fonctionne-t-il?';
+
+  subgraph clusterconsumer {
+    node [shape = none, fontname = impact, style=filled, fillcolor = deepskyblue1, fontcolor=black, alpha=0.5  ]
+    'Je veux comprendre\nune prediction' 'Et si je change ceci ?' 'Comment est-ce que les variables\naffectent la prediction ?' };
+    'Montre-moi ton modèle' -> 'Je veux comprendre\nune prediction'-> 'Et si je change ceci ?' [lhead = clusterconsumer];
+    'Je veux comprendre\nune prediction'-> 'Comment est-ce que les variables\naffectent la prediction ?';
+}
+")
+```
+
+
+```{r diagrammeR decision tree 2}
+grViz("
+digraph full_stack_showme {
+  graph [overlap = true, fontsize = 10, fontname = Impact, layout = dot, rankdir=LR, compound = true, nodesep = .05, ranksep = .25,
+         color=crimpson]
+  node [shape = none, fontname = impact, style=filled, fillcolor = dodgerblue3, fontcolor=white, alpha=0.5 ]
+  'Montre-moi ton modèle';
+
+  subgraph clusterds {
+    node [shape = none, fontname = impact, style=filled, fillcolor = deepskyblue1, fontcolor=black, alpha=0.5  ]
+    'Je veux comprendre le\nmodèle globalement' 'Le modèle est-il bon?' 'Je veux comparer les modèles entre eux' 'Comment fonctionne-t-il?'
+    'Je veux voir la prediction qualitativement' 'Je veux auditer les résidus' 'Toutes variables confondues' 'Pour une variable catégorielle' 'Pour une variable continue'} ;
+    'Montre-moi ton modèle' -> 'Je veux comprendre le\nmodèle globalement' [lhead = clusterds];
+  'Je veux comprendre le\nmodèle globalement' -> 'Le modèle est-il bon?' -> 'Je veux comparer les modèles entre eux';
+  'Le modèle est-il bon?' -> 'Je veux voir la prediction qualitativement'; 'Le modèle est-il bon?' -> 'Je veux auditer les résidus'
+  'Je veux comprendre le\nmodèle globalement' -> 'Comment fonctionne-t-il?'-> 'Toutes variables confondues'; 'Comment fonctionne-t-il?' -> 'Pour une variable catégorielle' ; 'Comment fonctionne-t-il?' -> 'Pour une variable continue'
+
+  subgraph clusterconsumer {
+    node [shape = none, fontname = impact, style=filled, fillcolor = deepskyblue1, fontcolor=black, alpha=0.5  ]
+    'Je veux comprendre\nune prediction' 'Et si je change ceci ?' 'Comment est-ce que les variables\naffectent la prédiction ?' 'Peut-on décomposer\nla prédiction ?'
+    'Quelle est l´importance\nde chaque variable ici ?'} ;
+  'Montre-moi ton modèle' -> 'Je veux comprendre\nune prediction'-> 'Et si je change ceci ?' [lhead = clusterconsumer];
+  'Je veux comprendre\nune prediction'-> 'Comment est-ce que les variables\naffectent la prédiction ?' -> 'Peut-on décomposer\nla prédiction ?';
+  'Comment est-ce que les variables\naffectent la prédiction ?' -> 'Quelle est l´importance\nde chaque variable ici ?'
+}
+")
+```
+
+
+```{r diagrammeR decision tree 3}
+grViz("
+digraph and_the_plots_for_ds {
+  graph [overlap = true, fontsize = 10, layout = twopi, nodesep = .3, ranksep = 1.3]
+  node [shape = box, penwidth=2, fontname = impact, width=5, style=filled, fillcolor = dodgerblue3, fontcolor=white, alpha=0.5 ]
+  'Montre-moi ton modèle';
+
+  node [shape = none, width=auto, fillcolor = deepskyblue3, fontcolor=black ]
+  'Montre-moi ton modèle' -> 'Je veux comprendre le\nmodèle globalement' -> {'Le modèle est-il bon?' 'Comment fonctionne-t-il?'}
+  'Montre-moi ton modèle' -> {'Je veux comprendre\nune prediction' 'Comment est-ce que les variables\naffectent la prédiction ?'}
+  
+  node [fillcolor = deepskyblue1, fontcolor=black ]
+  'Le modèle est-il bon?' -> {'Je veux voir la prediction qualitativement' 'Je veux auditer les résidus'}
+  'Je veux voir la prediction qualitativement'-> 'Je veux comparer les modèles entre eux';
+  'Comment fonctionne-t-il?'-> {'Toutes variables confondues' 'Pour une variable catégorielle' 'Pour une variable continue'}
+  'Je veux comprendre\nune prediction'-> 'Et si je change ceci ?'
+  'Comment est-ce que les variables\naffectent la prédiction ?' -> {'Peut-on décomposer la prédiction ?' 'Quelle est l´importance\nde chaque variable ici ?'}
+
+  node [shape = none, fillcolor = grey90, fontcolor=black ]
+  'Je veux auditer les résidus' -> 'Residual Diagnostic Plot';
+  'Je veux comparer les modèles entre eux' -> 'Model Performance Plot';
+  'Je veux voir la prediction qualitativement' -> 'Quantile-Quantile plot';
+  'Toutes variables confondues' -> 'Variable Importance';
+  'Pour une variable catégorielle' -> 'Merging Path Plot';
+  'Pour une variable continue' -> 'Partial Dependancy Plot';
+  'Et si je change ceci ?' -> 'Ceteris Paribus Plot';
+  'Peut-on décomposer la prédiction ?' -> 'BreakDown'; 'Peut-on décomposer la prédiction ?' -> 'Shapley Plot';
+  'Quelle est l´importance\nde chaque variable ici ?' -> 'Local Variable Importance'
+}
+")
+```
+
